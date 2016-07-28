@@ -1,0 +1,13 @@
+{
+  "name": "Filter Tags",
+  "uri": "https://github.com/arjunsuresh/qa-filtertags",
+  "description": "Allows questions in Q2A to be filtered based on tags",
+  "version": "1.0",
+  "date": "2016-07-08",
+  "author": "Arjun Suresh",
+  "author_uri": "http://armi.in/arjun",
+  "license": "GPLv2",
+  "update_uri": "https://raw.githubusercontent.com/arjunsuresh/qa-filtertags/master/metadata.json",
+  "min_q2a": "1.5",
+  "min_php": "5.1.6"
+}
