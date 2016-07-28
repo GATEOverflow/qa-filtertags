@@ -1,15 +1,6 @@
-# Top Search
-Question2answer Top Search
-Adds a widget which lists the top searched content
+# Tag Filter
+Question2answer Tag Filter
 
-Has an admin option to choose betwween normal search results and tag search results.
-Tag Search is given by this plugin: http://www.question2answer.org/qa/52496/tag-search-plugin-free
+Enables admins to hide questions belonging to sertain tag(s) globally from the site. This is usual to hide ceratin questions for sometime or for ever. Questions belonging to the selected tags (to be done on admin form) won't show up on question pages, recent activity or on individual question pages.  
 
-Plugin requires Event Logger to be turned on. 
-
-Styling of the widget can be done via the admin interface. 
-
-This is a beta code, using it at your own risk on a production environment. 
-
-Plugin would not work if you are using google custom search instead of Q2A search.
 
