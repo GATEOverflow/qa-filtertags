@@ -10,4 +10,5 @@
   "update_uri": "https://raw.githubusercontent.com/arjunsuresh/qa-filtertags/master/metadata.json",
   "min_q2a": "1.5",
   "min_php": "5.1.6"
+  "load_order": "after_db_init"
 }
