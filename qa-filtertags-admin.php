@@ -23,11 +23,38 @@ class qa_filtertags_admin {
 
 		$ok = null;
 		if (qa_clicked('filtertags_save_button')) {
-			foreach($_POST as $i => $v) {
+			// Track old tags before saving to detect newly added ones
+			$oldTagString = qa_opt('qa-filtertags-global');
+			$oldTags = array_filter(array_map('trim', explode(',', $oldTagString)), 'strlen');
 
+			foreach($_POST as $i => $v) {
 				qa_opt($i,$v);
-				
 			}
+
+			// Detect new tags and assign owners
+			$newTagString = qa_opt('qa-filtertags-global');
+			$newTags = array_filter(array_map('trim', explode(',', $newTagString)), 'strlen');
+
+			$ownersJson = qa_opt('qa-filtertags-owners');
+			$owners = $ownersJson ? json_decode($ownersJson, true) : array();
+			if (!is_array($owners)) $owners = array();
+
+			$currentUserId = qa_get_logged_in_userid();
+
+			foreach ($newTags as $tag) {
+				if (!isset($owners[$tag])) {
+					$owners[$tag] = $currentUserId ? (int)$currentUserId : 1;
+				}
+			}
+
+			// Clean up owners for removed tags
+			foreach (array_keys($owners) as $tag) {
+				if (!in_array($tag, $newTags)) {
+					unset($owners[$tag]);
+				}
+			}
+
+			qa_opt('qa-filtertags-owners', json_encode($owners));
 
 			$ok = qa_lang('admin/options_saved');
 		}
