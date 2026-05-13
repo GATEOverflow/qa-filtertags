@@ -115,8 +115,7 @@ class qa_filtertags_manage_page
 				--ftm-msg-error-text: #721c24;
 				--ftm-ac-bg: #fff;
 			}
-			@media (prefers-color-scheme: dark) {
-				:root {
+			html:not([data-theme="light"]) {
 					--ftm-bg: #1e1e1e;
 					--ftm-text: #ddd;
 					--ftm-text-muted: #aaa;
@@ -136,7 +135,6 @@ class qa_filtertags_manage_page
 					--ftm-msg-error-border: #5a2a2a;
 					--ftm-msg-error-text: #f4a4a4;
 					--ftm-ac-bg: #2a2a2a;
-				}
 			}
 			.ftm-msg { padding:12px 16px; margin:10px 0 20px; border:1px solid; border-radius:4px; }
 			.ftm-msg-success { background:var(--ftm-msg-success-bg); border-color:var(--ftm-msg-success-border); color:var(--ftm-msg-success-text); }
