@@ -166,15 +166,22 @@ class qa_filtertags_manage_page
 
 		// Only show tag listing when no tag is selected
 		if (!$selectedTag || !in_array($selectedTag, $globalTags)) {
+			// Batch load all stats in 3 queries instead of per-tag
+			$allQuestionCounts = $this->get_all_question_counts($visibleTags);
+			$allUserCounts = $this->get_all_user_counts($visibleTags);
+			$allExclusiveCounts = $this->get_all_exclusive_counts($visibleTags, $globalTags);
+			$ownerHandles = $this->get_owner_handles($owners, $visibleTags);
+
 			$html .= '<h2>Filter Tags (' . count($visibleTags) . ')</h2>';
 			$html .= '<div class="ftm-flex"><input type="text" id="ftm-tag-search" placeholder="Search tags..." class="ftm-input" style="width:300px;" oninput="ftmFilterTags()"></div>';
 			$html .= '<table class="ftm-table" id="ftm-tag-table">';
-			$html .= '<thead><tr><th>#</th><th>Tag</th><th>Owner</th><th style="text-align:center;">Actions</th></tr></thead>';
+			$html .= '<thead><tr><th>#</th><th>Tag</th><th>Questions</th><th>Exclusive</th><th>Users</th><th>Owner</th><th style="text-align:center;">Actions</th></tr></thead>';
 			$html .= '<tbody>';
 
 			if (empty($visibleTags)) {
-				$html .= '<tr><td colspan="4" style="padding:12px;">No filter tags available.</td></tr>';
+				$html .= '<tr><td colspan="7" style="padding:12px;">No filter tags available.</td></tr>';
 			} else {
+				$securityCode = qa_get_form_security_code('filtertags-manage');
 				$idx = 0;
 				foreach ($visibleTags as $tag) {
 					$tag = trim($tag);
@@ -182,19 +189,48 @@ class qa_filtertags_manage_page
 					$idx++;
 
 					$ownerUserId = isset($owners[$tag]) ? (int)$owners[$tag] : 1;
-					$ownerHandle = $this->get_user_handle($ownerUserId);
+					$ownerHandle = isset($ownerHandles[$ownerUserId]) ? $ownerHandles[$ownerUserId] : 'Unknown';
 					$manageUrl = qa_path_html('view-filtertags-global/' . urlencode($tag));
+					$questionCount = isset($allQuestionCounts[$tag]) ? $allQuestionCounts[$tag] : 0;
+					$exclusiveCount = isset($allExclusiveCounts[$tag]) ? $allExclusiveCounts[$tag] : 0;
+					$userCount = isset($allUserCounts[$tag]) ? $allUserCounts[$tag] : 0;
 
 					$html .= '<tr class="ftm-tag-row" data-tag="' . qa_html(strtolower($tag)) . '">';
 					$html .= '<td>' . $idx . '</td>';
 					$html .= '<td><a href="' . $manageUrl . '"><strong>' . qa_html($tag) . '</strong></a></td>';
+					$html .= '<td>' . $questionCount . '</td>';
+					$html .= '<td>' . $exclusiveCount . '</td>';
+					$html .= '<td>' . $userCount . '</td>';
 					$html .= '<td><a href="' . qa_path_html('user/' . $ownerHandle) . '">' . qa_html($ownerHandle) . '</a></td>';
-					$html .= '<td style="text-align:center;"><a href="' . $manageUrl . '" class="ftm-btn ftm-btn-primary" style="text-decoration:none;font-size:13px;">Manage</a></td>';
+					$html .= '<td style="text-align:center;">';
+					$html .= '<a href="' . $manageUrl . '" class="ftm-btn ftm-btn-primary" style="text-decoration:none;font-size:13px;">Manage</a> ';
+					$html .= '<form method="post" action="' . qa_path_html('view-filtertags-global') . '" style="display:inline;" onsubmit="return confirm(\'Delete filter tag \\\'' . qa_html($tag) . '\\\'? This removes it from the global list and from all users access lists.\');">';
+					$html .= '<input type="hidden" name="action" value="delete_tag">';
+					$html .= '<input type="hidden" name="tag" value="' . qa_html($tag) . '">';
+					$html .= '<input type="hidden" name="code" value="' . qa_html($securityCode) . '">';
+					$html .= '<input type="submit" value="Delete" class="ftm-btn ftm-btn-danger" style="font-size:13px;">';
+					$html .= '</form>';
+					$html .= '</td>';
 					$html .= '</tr>';
 				}
 			}
 
 			$html .= '</tbody></table>';
+
+			// Count empty tags
+			$emptyCount = 0;
+			foreach ($visibleTags as $t) {
+				$t = trim($t);
+				if (!empty($t) && empty($allQuestionCounts[$t])) $emptyCount++;
+			}
+			if ($emptyCount > 0) {
+				$html .= '<form method="post" action="' . qa_path_html('view-filtertags-global') . '" style="margin-top:15px;" onsubmit="return confirm(\'Delete all ' . $emptyCount . ' tags with 0 questions? This also removes them from all users access lists.\');">';
+				$html .= '<input type="hidden" name="action" value="delete_empty_tags">';
+				$html .= '<input type="hidden" name="code" value="' . qa_html($securityCode) . '">';
+				$html .= '<input type="submit" value="Delete all empty tags (' . $emptyCount . ')" class="ftm-btn ftm-btn-danger">';
+				$html .= '</form>';
+			}
+
 			$html .= '<script>
 				function ftmFilterTags() {
 					var q = document.getElementById("ftm-tag-search").value.toLowerCase();
@@ -222,11 +258,18 @@ class qa_filtertags_manage_page
 		$action = qa_post_text('action');
 		$tag = qa_post_text('tag');
 
-		if (!$action || !$tag) return null;
+		if (!$action) return null;
 
 		if (!qa_check_form_security_code('filtertags-manage', qa_post_text('code'))) {
 			return 'Security code mismatch. Please try again.';
 		}
+
+		// Actions that don't require a specific tag
+		if ($action === 'delete_empty_tags') {
+			return $this->action_delete_empty_tags($isAdmin, $currentUserId);
+		}
+
+		if (!$tag) return null;
 
 		// Permission check: admin can do all, owner can add/remove users and change owner
 		if (!$isAdmin) {
@@ -235,7 +278,7 @@ class qa_filtertags_manage_page
 			if ((int)$currentUserId !== $tagOwner) {
 				return 'Access denied. You are not the owner of this tag.';
 			}
-			if (!in_array($action, array('add_user', 'remove_user', 'change_owner'))) {
+			if (!in_array($action, array('add_user', 'remove_user', 'change_owner', 'delete_tag'))) {
 				return 'Access denied. Only admins can perform this action.';
 			}
 		}
@@ -251,6 +294,8 @@ class qa_filtertags_manage_page
 				return $this->action_remove_tag_all_users($tag);
 			case 'change_owner':
 				return $this->action_change_owner($tag, qa_post_text('owner_email'));
+			case 'delete_tag':
+				return $this->action_delete_tag($tag);
 		}
 
 		return null;
@@ -265,39 +310,44 @@ class qa_filtertags_manage_page
 
 	private function get_tag_owners()
 	{
-		$json = qa_opt('qa-filtertags-owners');
-		$owners = $json ? json_decode($json, true) : array();
-		return is_array($owners) ? $owners : array();
+		$result = qa_db_query_sub(
+			"SELECT tag, content FROM ^tagmetas WHERE title = 'filtertag_owner'"
+		);
+		$rows = qa_db_read_all_assoc($result);
+		$owners = array();
+		foreach ($rows as $row) {
+			$owners[$row['tag']] = (int)$row['content'];
+		}
+		return $owners;
 	}
 
-	private function set_tag_owners($owners)
+	private function set_tag_owner($tag, $userid)
 	{
-		qa_opt('qa-filtertags-owners', json_encode($owners));
+		qa_db_query_sub(
+			"INSERT INTO ^tagmetas (tag, title, content) VALUES ($, 'filtertag_owner', $) ON DUPLICATE KEY UPDATE content = $",
+			$tag, (string)(int)$userid, (string)(int)$userid
+		);
+	}
+
+	private function remove_tag_owner($tag)
+	{
+		qa_db_query_sub(
+			"DELETE FROM ^tagmetas WHERE tag = $ AND title = 'filtertag_owner'",
+			$tag
+		);
 	}
 
 	private function ensure_owners_initialized()
 	{
 		$globalTags = $this->get_global_tags();
 		$owners = $this->get_tag_owners();
-		$changed = false;
 
 		foreach ($globalTags as $tag) {
 			if (!isset($owners[$tag])) {
-				$owners[$tag] = 1; // default to userid 1 for older tags
-				$changed = true;
+				$defaultOwner = (stripos($tag, 'goclasses') !== false) ? 181161 : 1;
+				$this->set_tag_owner($tag, $defaultOwner);
+				$owners[$tag] = $defaultOwner;
 			}
-		}
-
-		// Clean up owners for tags no longer in the global list
-		foreach (array_keys($owners) as $tag) {
-			if (!in_array($tag, $globalTags)) {
-				unset($owners[$tag]);
-				$changed = true;
-			}
-		}
-
-		if ($changed) {
-			$this->set_tag_owners($owners);
 		}
 
 		return $owners;
@@ -329,13 +379,98 @@ class qa_filtertags_manage_page
 		return $handle ? $handle : 'Unknown';
 	}
 
-	private function get_question_count($tag)
+	private function get_owner_handles($owners, $tags)
 	{
+		$userIds = array();
+		foreach ($tags as $tag) {
+			$tag = trim($tag);
+			if (empty($tag)) continue;
+			$uid = isset($owners[$tag]) ? (int)$owners[$tag] : 1;
+			$userIds[$uid] = true;
+		}
+		if (empty($userIds)) return array();
+		$ids = array_keys($userIds);
+		$placeholders = implode(',', array_fill(0, count($ids), '#'));
 		$result = qa_db_query_sub(
-			"SELECT COUNT(DISTINCT pt.postid) FROM ^posttags pt JOIN ^words w ON pt.wordid = w.wordid WHERE w.word = $",
-			$tag
+			"SELECT userid, handle FROM ^users WHERE userid IN ($placeholders)",
+			...$ids
 		);
-		return (int)qa_db_read_one_value($result, true);
+		$rows = qa_db_read_all_assoc($result);
+		$handles = array();
+		foreach ($rows as $row) {
+			$handles[(int)$row['userid']] = $row['handle'];
+		}
+		return $handles;
+	}
+
+	private function get_all_question_counts($tags)
+	{
+		if (empty($tags)) return array();
+		$placeholders = implode(',', array_fill(0, count($tags), '$'));
+		$result = qa_db_query_sub(
+			"SELECT w.word, COUNT(DISTINCT pt.postid) as cnt FROM ^posttags pt " .
+			"JOIN ^words w ON pt.wordid = w.wordid " .
+			"WHERE w.word IN ($placeholders) GROUP BY w.word",
+			...$tags
+		);
+		$rows = qa_db_read_all_assoc($result);
+		$counts = array();
+		foreach ($rows as $row) {
+			$counts[$row['word']] = (int)$row['cnt'];
+		}
+		return $counts;
+	}
+
+	private function get_all_user_counts($tags)
+	{
+		if (empty($tags)) return array();
+		// Single scan of usermetas, count per tag using PHP
+		$result = qa_db_query_sub(
+			"SELECT content FROM ^usermetas WHERE title = 'questionaccesstags'"
+		);
+		$rows = qa_db_read_all_assoc($result);
+		$tagSet = array_flip($tags);
+		$counts = array();
+		foreach ($rows as $row) {
+			$userTags = array_filter(array_map('trim', explode(',', $row['content'])), 'strlen');
+			foreach ($userTags as $ut) {
+				if (isset($tagSet[$ut])) {
+					$counts[$ut] = isset($counts[$ut]) ? $counts[$ut] + 1 : 1;
+				}
+			}
+		}
+		return $counts;
+	}
+
+	private function get_all_exclusive_counts($tags, $allGlobalTags)
+	{
+		if (empty($tags)) return array();
+		// Get all postids for all global filter tags in one query
+		$placeholders = implode(',', array_fill(0, count($allGlobalTags), '$'));
+		$result = qa_db_query_sub(
+			"SELECT w.word, pt.postid FROM ^posttags pt " .
+			"JOIN ^words w ON pt.wordid = w.wordid " .
+			"WHERE w.word IN ($placeholders)",
+			...$allGlobalTags
+		);
+		$rows = qa_db_read_all_assoc($result);
+
+		// Build: postid => set of global tags it has
+		$postTags = array();
+		foreach ($rows as $row) {
+			$postTags[$row['postid']][] = $row['word'];
+		}
+
+		// Count exclusive posts per tag
+		$tagSet = array_flip($tags);
+		$counts = array();
+		foreach ($postTags as $postid => $ptags) {
+			if (count($ptags) === 1 && isset($tagSet[$ptags[0]])) {
+				$t = $ptags[0];
+				$counts[$t] = isset($counts[$t]) ? $counts[$t] + 1 : 1;
+			}
+		}
+		return $counts;
 	}
 
 	private function get_users_for_tag($tag)
@@ -348,6 +483,15 @@ class qa_filtertags_manage_page
 			$tag
 		);
 		return qa_db_read_all_assoc($result);
+	}
+
+	private function get_question_count($tag)
+	{
+		$result = qa_db_query_sub(
+			"SELECT COUNT(DISTINCT pt.postid) FROM ^posttags pt JOIN ^words w ON pt.wordid = w.wordid WHERE w.word = $",
+			$tag
+		);
+		return (int)qa_db_read_one_value($result, true);
 	}
 
 	private function render_tag_detail($tag, $isAdmin = false)
@@ -365,48 +509,6 @@ class qa_filtertags_manage_page
 		$html .= '<h2>Tag Detail: <em>' . qa_html($tag) . '</em></h2>';
 		$html .= '<p>Questions with this tag: <strong>' . (int)$questionCount . '</strong></p>';
 		$html .= '<p>Tag Owner: <strong><a href="' . qa_path_html('user/' . $ownerHandle) . '">' . qa_html($ownerHandle) . '</a></strong> (User ID: ' . $ownerUserId . ')</p>';
-
-		// Users table - only show info relevant to this tag (no other access tags)
-		$html .= '<h3 class="ftm-section">Users with Access (' . count($users) . ')</h3>';
-		$html .= '<table class="ftm-table">';
-		$html .= '<thead><tr><th>User ID</th><th>Handle</th><th>Email</th><th style="text-align:center;">Action</th></tr></thead>';
-		$html .= '<tbody>';
-
-		if (empty($users)) {
-			$html .= '<tr><td colspan="4" style="padding:12px;">No users have access to this tag.</td></tr>';
-		} else {
-			foreach ($users as $user) {
-				$html .= '<tr>';
-				$html .= '<td>' . (int)$user['userid'] . '</td>';
-				$html .= '<td><a href="' . qa_path_html('user/' . $user['handle']) . '">' . qa_html($user['handle']) . '</a></td>';
-				$html .= '<td>' . qa_html($user['email']) . '</td>';
-				$html .= '<td style="text-align:center;">';
-				$html .= '<form method="post" action="' . $formAction . '" style="display:inline;" onsubmit="return confirm(\'Remove access to tag \\\'' . qa_html($tag) . '\\\' for user ' . qa_html($user['handle']) . '?\');">';
-				$html .= '<input type="hidden" name="action" value="remove_user">';
-				$html .= '<input type="hidden" name="tag" value="' . qa_html($tag) . '">';
-				$html .= '<input type="hidden" name="userid" value="' . (int)$user['userid'] . '">';
-				$html .= '<input type="hidden" name="code" value="' . qa_html($securityCode) . '">';
-				$html .= '<input type="submit" value="Remove" class="ftm-btn ftm-btn-danger">';
-				$html .= '</form>';
-				$html .= '</td>';
-				$html .= '</tr>';
-			}
-		}
-
-		$html .= '</tbody></table>';
-
-		// Add user form
-		$html .= '<h3 class="ftm-section">Add User</h3>';
-		$html .= '<form method="post" action="' . $formAction . '" id="ftm-add-user-form">';
-		$html .= '<input type="hidden" name="action" value="add_user">';
-		$html .= '<input type="hidden" name="tag" value="' . qa_html($tag) . '">';
-		$html .= '<input type="hidden" name="code" value="' . qa_html($securityCode) . '">';
-		$html .= '<input type="hidden" name="email" id="ftm-add-user-email" value="">';
-		$html .= '<div class="ftm-flex">';
-		$html .= '<div class="ftm-ac-wrap"><input type="text" id="ftm-add-user-input" placeholder="Search by handle or email..." autocomplete="off" class="ftm-input"><div class="ftm-ac-results" id="ftm-add-user-results"></div></div>';
-		$html .= '<input type="submit" value="Add User" class="ftm-btn ftm-btn-primary">';
-		$html .= '</div>';
-		$html .= '</form>';
 
 		// Change owner form
 		$html .= '<h3 class="ftm-section">Change Tag Owner</h3>';
@@ -454,6 +556,48 @@ class qa_filtertags_manage_page
 			$html .= '<input type="submit" value="Remove Tag From All Users" class="ftm-btn ftm-btn-danger">';
 			$html .= '</form>';
 		}
+
+		// Users with access table
+		$html .= '<h3 class="ftm-section">Users with Access (' . count($users) . ')</h3>';
+
+		// Add user form
+		$html .= '<form method="post" action="' . $formAction . '" id="ftm-add-user-form">';
+		$html .= '<input type="hidden" name="action" value="add_user">';
+		$html .= '<input type="hidden" name="tag" value="' . qa_html($tag) . '">';
+		$html .= '<input type="hidden" name="code" value="' . qa_html($securityCode) . '">';
+		$html .= '<input type="hidden" name="email" id="ftm-add-user-email" value="">';
+		$html .= '<div class="ftm-flex">';
+		$html .= '<div class="ftm-ac-wrap"><input type="text" id="ftm-add-user-input" placeholder="Search by handle or email..." autocomplete="off" class="ftm-input"><div class="ftm-ac-results" id="ftm-add-user-results"></div></div>';
+		$html .= '<input type="submit" value="Add User" class="ftm-btn ftm-btn-primary">';
+		$html .= '</div>';
+		$html .= '</form>';
+
+		$html .= '<table class="ftm-table">';
+		$html .= '<thead><tr><th>User ID</th><th>Handle</th><th>Email</th><th style="text-align:center;">Action</th></tr></thead>';
+		$html .= '<tbody>';
+
+		if (empty($users)) {
+			$html .= '<tr><td colspan="4" style="padding:12px;">No users have access to this tag.</td></tr>';
+		} else {
+			foreach ($users as $user) {
+				$html .= '<tr>';
+				$html .= '<td>' . (int)$user['userid'] . '</td>';
+				$html .= '<td><a href="' . qa_path_html('user/' . $user['handle']) . '">' . qa_html($user['handle']) . '</a></td>';
+				$html .= '<td>' . qa_html($user['email']) . '</td>';
+				$html .= '<td style="text-align:center;">';
+				$html .= '<form method="post" action="' . $formAction . '" style="display:inline;" onsubmit="return confirm(\'Remove access to tag \\\'' . qa_html($tag) . '\\\' for user ' . qa_html($user['handle']) . '?\');">';
+				$html .= '<input type="hidden" name="action" value="remove_user">';
+				$html .= '<input type="hidden" name="tag" value="' . qa_html($tag) . '">';
+				$html .= '<input type="hidden" name="userid" value="' . (int)$user['userid'] . '">';
+				$html .= '<input type="hidden" name="code" value="' . qa_html($securityCode) . '">';
+				$html .= '<input type="submit" value="Remove" class="ftm-btn ftm-btn-danger">';
+				$html .= '</form>';
+				$html .= '</td>';
+				$html .= '</tr>';
+			}
+		}
+
+		$html .= '</tbody></table>';
 
 		// Autocomplete JS
 		$searchUrl = qa_path('view-filtertags-global');
@@ -614,9 +758,8 @@ class qa_filtertags_manage_page
 		// Update owner mapping
 		$owners = $this->get_tag_owners();
 		if (isset($owners[$oldTag])) {
-			$owners[$newTag] = $owners[$oldTag];
-			unset($owners[$oldTag]);
-			$this->set_tag_owners($owners);
+			$this->set_tag_owner($newTag, $owners[$oldTag]);
+			$this->remove_tag_owner($oldTag);
 		}
 
 		// Handle users' access tags
@@ -676,8 +819,7 @@ class qa_filtertags_manage_page
 			return 'Error: This user is already the owner of this tag.';
 		}
 
-		$owners[$tag] = $newOwnerUserId;
-		$this->set_tag_owners($owners);
+		$this->set_tag_owner($tag, $newOwnerUserId);
 
 		// Fire Q2A event
 		$cookieid = isset($_COOKIE['qa_session']) ? $_COOKIE['qa_session'] : null;
@@ -710,5 +852,76 @@ class qa_filtertags_manage_page
 		}
 
 		return 'Ownership of tag "' . $tag . '" transferred to ' . $user['handle'] . ' (' . $email . ').';
+	}
+
+	private function action_delete_tag($tag)
+	{
+		// Remove from global filter tags list
+		$globalTags = $this->get_global_tags();
+		$globalTags = array_values(array_diff($globalTags, array($tag)));
+		qa_opt('qa-filtertags-global', implode(',', $globalTags));
+
+		// Remove from owners
+		$this->remove_tag_owner($tag);
+
+		// Remove from all users' accesstags
+		$users = $this->get_users_for_tag($tag);
+		$count = 0;
+		foreach ($users as $user) {
+			$tagsArray = array_filter(array_map('trim', explode(',', $user['accesstags'])), 'strlen');
+			$tagsArray = array_values(array_diff($tagsArray, array($tag)));
+			qa_db_usermeta_set($user['userid'], 'questionaccesstags', implode(',', $tagsArray));
+			$count++;
+		}
+
+		return 'Deleted filter tag "' . $tag . '". Removed from global list and from ' . $count . ' user(s) access lists.';
+	}
+
+	private function action_delete_empty_tags($isAdmin = false, $currentUserId = null)
+	{
+		$globalTags = $this->get_global_tags();
+		$questionCounts = $this->get_all_question_counts($globalTags);
+
+		// Scope to owned tags for non-admins
+		$candidateTags = $isAdmin ? $globalTags : $this->get_owned_tags($currentUserId);
+
+		$emptyTags = array();
+		foreach ($candidateTags as $tag) {
+			if (empty($questionCounts[$tag])) {
+				$emptyTags[] = $tag;
+			}
+		}
+
+		if (empty($emptyTags)) {
+			return 'No empty tags found.';
+		}
+
+		// Remove from global list
+		$remaining = array_values(array_diff($globalTags, $emptyTags));
+		qa_opt('qa-filtertags-global', implode(',', $remaining));
+
+		// Remove owners
+		foreach ($emptyTags as $tag) {
+			$this->remove_tag_owner($tag);
+		}
+
+		// Remove from users' accesstags
+		$result = qa_db_query_sub(
+			"SELECT userid, content FROM ^usermetas WHERE title = 'questionaccesstags'"
+		);
+		$rows = qa_db_read_all_assoc($result);
+		$emptySet = array_flip($emptyTags);
+		$userCount = 0;
+
+		foreach ($rows as $row) {
+			$tagsArray = array_filter(array_map('trim', explode(',', $row['content'])), 'strlen');
+			$filtered = array_values(array_diff($tagsArray, $emptyTags));
+			if (count($filtered) < count($tagsArray)) {
+				qa_db_usermeta_set($row['userid'], 'questionaccesstags', implode(',', $filtered));
+				$userCount++;
+			}
+		}
+
+		return 'Deleted ' . count($emptyTags) . ' empty tag(s). Updated ' . $userCount . ' user(s) access lists.';
 	}
 }
