@@ -12,7 +12,11 @@
 	
 	qa_register_plugin_overrides('qa-filtertags-overrides.php', 'Filter Tags Override');
 
+	qa_register_plugin_layer('qa-filtertags-layer.php', 'Filter Tags Layer');
+
 	qa_register_plugin_module('page', 'qa-filtertags-manage-page.php', 'qa_filtertags_manage_page', 'Filter Tags Manage Page');
+
+	qa_register_plugin_module('page', 'qa-filtertags-flagged-page.php', 'qa_filtertags_flagged_page', 'Filter Tags Flagged Page');
 /*
 	Omit PHP closing tag to help avoid accidental output
 */

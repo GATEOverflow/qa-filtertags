@@ -169,15 +169,16 @@ class qa_filtertags_manage_page
 			$allUserCounts = $this->get_all_user_counts($visibleTags);
 			$allExclusiveCounts = $this->get_all_exclusive_counts($visibleTags, $globalTags);
 			$ownerHandles = $this->get_owner_handles($owners, $visibleTags);
+			$allFlaggedCounts = $this->get_all_flagged_counts($visibleTags);
 
 			$html .= '<h2>Filter Tags (' . count($visibleTags) . ')</h2>';
 			$html .= '<div class="ftm-flex"><input type="text" id="ftm-tag-search" placeholder="Search tags..." class="ftm-input" style="width:300px;" oninput="ftmFilterTags()"></div>';
 			$html .= '<table class="ftm-table" id="ftm-tag-table">';
-			$html .= '<thead><tr><th>#</th><th>Tag</th><th>Questions</th><th>Exclusive</th><th>Users</th><th>Owner</th><th style="text-align:center;">Actions</th></tr></thead>';
+			$html .= '<thead><tr><th>#</th><th>Tag</th><th>Questions</th><th>Exclusive</th><th>Flagged</th><th>Users</th><th>Owner</th><th style="text-align:center;">Actions</th></tr></thead>';
 			$html .= '<tbody>';
 
 			if (empty($visibleTags)) {
-				$html .= '<tr><td colspan="7" style="padding:12px;">No filter tags available.</td></tr>';
+				$html .= '<tr><td colspan="8" style="padding:12px;">No filter tags available.</td></tr>';
 			} else {
 				$securityCode = qa_get_form_security_code('filtertags-manage');
 				$idx = 0;
@@ -191,6 +192,7 @@ class qa_filtertags_manage_page
 					$manageUrl = qa_path_html('view-filtertags-global/' . urlencode($tag));
 					$questionCount = isset($allQuestionCounts[$tag]) ? $allQuestionCounts[$tag] : 0;
 					$exclusiveCount = isset($allExclusiveCounts[$tag]) ? $allExclusiveCounts[$tag] : 0;
+					$flaggedCount = isset($allFlaggedCounts[$tag]) ? $allFlaggedCounts[$tag] : 0;
 					$userCount = isset($allUserCounts[$tag]) ? $allUserCounts[$tag] : 0;
 
 					$html .= '<tr class="ftm-tag-row" data-tag="' . qa_html(strtolower($tag)) . '">';
@@ -198,6 +200,7 @@ class qa_filtertags_manage_page
 					$html .= '<td><a href="' . $manageUrl . '"><strong>' . qa_html($tag) . '</strong></a></td>';
 					$html .= '<td>' . $questionCount . '</td>';
 					$html .= '<td>' . $exclusiveCount . '</td>';
+					$html .= '<td>' . ($flaggedCount > 0 ? '<a href="' . qa_path_html('flagged/' . urlencode($tag)) . '" style="color:#d9534f;font-weight:600;">' . $flaggedCount . '</a>' : '0') . '</td>';
 					$html .= '<td>' . $userCount . '</td>';
 					$html .= '<td><a href="' . qa_path_html('user/' . $ownerHandle) . '">' . qa_html($ownerHandle) . '</a></td>';
 					$html .= '<td style="text-align:center;">';
@@ -471,6 +474,28 @@ class qa_filtertags_manage_page
 		return $counts;
 	}
 
+	private function get_all_flagged_counts($tags)
+	{
+		if (empty($tags)) return array();
+		$placeholders = implode(',', array_fill(0, count($tags), '$'));
+		$result = qa_db_query_sub(
+			"SELECT w.word, COUNT(DISTINCT p.postid) as cnt "
+			. "FROM ^posts p "
+			. "JOIN ^posttags pt ON (CASE WHEN LEFT(p.type,1)='Q' THEN p.postid ELSE p.parentid END) = pt.postid "
+			. "JOIN ^words w ON pt.wordid = w.wordid "
+			. "WHERE p.flagcount > 0 AND p.type IN ('Q', 'A', 'C') "
+			. "AND w.word IN ($placeholders) "
+			. "GROUP BY w.word",
+			...$tags
+		);
+		$rows = qa_db_read_all_assoc($result);
+		$counts = array();
+		foreach ($rows as $row) {
+			$counts[$row['word']] = (int)$row['cnt'];
+		}
+		return $counts;
+	}
+
 	private function get_users_for_tag($tag)
 	{
 		$result = qa_db_query_sub(
@@ -507,6 +532,12 @@ class qa_filtertags_manage_page
 		$html .= '<h2>Tag Detail: <em>' . qa_html($tag) . '</em></h2>';
 		$html .= '<p>Questions with this tag: <strong>' . (int)$questionCount . '</strong></p>';
 		$html .= '<p>Tag Owner: <strong><a href="' . qa_path_html('user/' . $ownerHandle) . '">' . qa_html($ownerHandle) . '</a></strong> (User ID: ' . $ownerUserId . ')</p>';
+
+		// Show flagged posts link if any exist
+		$flaggedCount = $this->count_flagged_by_tag($tag);
+		if ($flaggedCount > 0) {
+			$html .= '<p><a href="' . qa_path_html('flagged/' . urlencode($tag)) . '" style="color:#d9534f;font-weight:600;">&#9873; Flagged posts in this tag (' . $flaggedCount . ')</a></p>';
+		}
 
 		// Change owner form
 		$html .= '<h3 class="ftm-section">Change Tag Owner</h3>';
@@ -921,5 +952,18 @@ class qa_filtertags_manage_page
 		}
 
 		return 'Deleted ' . count($emptyTags) . ' empty tag(s). Updated ' . $userCount . ' user(s) access lists.';
+	}
+
+	private function count_flagged_by_tag($tag)
+	{
+		$result = qa_db_query_sub(
+			"SELECT COUNT(*) FROM ^posts p "
+			. "WHERE p.flagcount > 0 AND p.type IN ('Q', 'A', 'C') "
+			. "AND (CASE WHEN LEFT(p.type,1)='Q' THEN p.postid ELSE p.parentid END) IN ("
+			. "  SELECT pt.postid FROM ^posttags pt JOIN ^words w ON pt.wordid = w.wordid WHERE w.word = $"
+			. ")",
+			$tag
+		);
+		return (int)qa_db_read_one_value($result, true);
 	}
 }
