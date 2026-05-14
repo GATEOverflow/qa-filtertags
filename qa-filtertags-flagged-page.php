@@ -116,26 +116,33 @@ class qa_filtertags_flagged_page
 				. ")";
 			$title = 'Flagged Posts in Tag: ' . qa_html($tag);
 			$requestPath = 'flagged/' . urlencode($tag);
+			$selectspec['source'] = str_replace(
+				"WHERE flagcount>0 AND type IN ('Q', 'A', 'C')",
+				"WHERE flagcount>0 AND type IN ('Q', 'A', 'C')" . $filterSql,
+				$selectspec['source']
+			);
+			$total = $this->count_flagged_by_tag($tag);
+			$filterParams = [];
 		} else {
-			$filterSql = " AND ^posts.userid = " . (int)$viewUserId;
-			$title = 'Flagged Posts by: ' . qa_html($viewUserHandle);
+			$title = 'Posts by ' . qa_html($viewUserHandle) . ' — Flagged';
 			$requestPath = 'flagged/user/' . urlencode($viewUserHandle);
+			// Inject user filter before ORDER BY — avoids conflict with the selectspec override
+			// which already patches the WHERE clause for GET filter params (filter_type/reason/public)
+			$selectspec['source'] = str_replace(
+				' ORDER BY ^posts.flagcount DESC',
+				' AND ^posts.userid=' . (int)$viewUserId . ' ORDER BY ^posts.flagcount DESC',
+				$selectspec['source']
+			);
+			$filterParams = [];
+			if (qa_get('filter_public')) $filterParams['filter_public'] = '1';
+			$ft = qa_get('filter_type');
+			if ($ft && in_array($ft, ['Q', 'A', 'C'])) $filterParams['filter_type'] = $ft;
+			$fr = qa_get('filter_reason');
+			if ($fr) $filterParams['filter_reason'] = $fr;
+			$total = $this->count_flagged_by_user($viewUserId, $filterParams);
 		}
-
-		$selectspec['source'] = str_replace(
-			"WHERE flagcount>0 AND type IN ('Q', 'A', 'C')",
-			"WHERE flagcount>0 AND type IN ('Q', 'A', 'C')" . $filterSql,
-			$selectspec['source']
-		);
 
 		$questions = qa_db_select_with_pending($selectspec);
-
-		// Count total for pagination
-		if ($mode === 'tag') {
-			$total = $this->count_flagged_by_tag($tag);
-		} else {
-			$total = $this->count_flagged_by_user($viewUserId);
-		}
 
 		// Build content
 		$qa_content = qa_content_prepare();
@@ -204,14 +211,13 @@ class qa_filtertags_flagged_page
 				$pageSize,
 				$total,
 				2,
-				array()
+				$filterParams
 			);
 		} else {
-			$qa_content['title'] = 'No flagged posts found';
 			if ($mode === 'tag') {
-				$qa_content['title'] .= ' in tag: ' . qa_html($tag);
+				$qa_content['title'] = 'No flagged posts found in tag: ' . qa_html($tag);
 			} else {
-				$qa_content['title'] .= ' by: ' . qa_html($viewUserHandle);
+				$qa_content['title'] = 'No flagged posts by ' . qa_html($viewUserHandle);
 			}
 		}
 
@@ -305,14 +311,30 @@ class qa_filtertags_flagged_page
 		return (int)qa_db_read_one_value($result, true);
 	}
 
-	private function count_flagged_by_user($userid)
+	private function count_flagged_by_user($userid, $filterParams = [])
 	{
-		$result = qa_db_query_sub(
-			"SELECT COUNT(*) FROM ^posts "
-			. "WHERE flagcount > 0 AND type IN ('Q', 'A', 'C') "
-			. "AND userid = #",
-			$userid
-		);
+		$where = "flagcount > 0 AND type IN ('Q', 'A', 'C') AND userid = " . (int)$userid;
+		if (!empty($filterParams['filter_type']) && in_array($filterParams['filter_type'], ['Q', 'A', 'C'])) {
+			$where .= " AND LEFT(type,1)='" . $filterParams['filter_type'] . "'";
+		}
+		if (!empty($filterParams['filter_reason'])) {
+			if ($filterParams['filter_reason'] === 'none') {
+				$where .= " AND postid NOT IN (SELECT postid FROM ^flagreasons)";
+			} elseif (is_numeric($filterParams['filter_reason']) && (int)$filterParams['filter_reason'] >= 1 && (int)$filterParams['filter_reason'] <= 7) {
+				$where .= " AND postid IN (SELECT postid FROM ^flagreasons WHERE reasonid=" . (int)$filterParams['filter_reason'] . ")";
+			}
+		}
+		if (!empty($filterParams['filter_public'])) {
+			$globalTags = qa_opt('qa-filtertags-global');
+			if (!empty($globalTags)) {
+				$tags = array_map('trim', explode(',', $globalTags));
+				$escaped = implode("','", array_map('qa_db_escape_string', $tags));
+				$where .= " AND (CASE WHEN LEFT(type,1)='Q' THEN postid ELSE parentid END) NOT IN ("
+					. "SELECT pt.postid FROM ^posttags pt JOIN ^words wd ON pt.wordid=wd.wordid WHERE wd.word IN ('" . $escaped . "')"
+					. ")";
+			}
+		}
+		$result = qa_db_query_sub("SELECT COUNT(*) FROM ^posts WHERE " . $where);
 		return (int)qa_db_read_one_value($result, true);
 	}
 
