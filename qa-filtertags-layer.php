@@ -7,12 +7,55 @@ if (!defined('QA_VERSION')) {
 
 class qa_html_theme_layer extends qa_html_theme_base
 {
+	function nav($navtype, $level = null)
+	{
+		if ($navtype === 'sub')
+			$this->add_flagged_sub_nav();
+
+		qa_html_theme_base::nav($navtype, $level);
+	}
+
+	private function add_flagged_sub_nav()
+	{
+		if (!qa_get_logged_in_userid())
+			return;
+
+		$parts = explode('/', qa_request());
+		$handle = null;
+		$selected = false;
+
+		if ($parts[0] === 'user' && isset($parts[1]) && $parts[1] !== '') {
+			// profile, questions, answers, wall pages of a user
+			$handle = urldecode($parts[1]);
+		} elseif ($parts[0] === 'flagged' && isset($parts[1]) && $parts[1] === 'user') {
+			// the flagged page itself
+			$handle = (isset($parts[2]) && $parts[2] !== '') ? urldecode($parts[2]) : qa_get_logged_in_handle();
+			$selected = true;
+		}
+
+		if ($handle === null)
+			return;
+
+		// Only the user themselves or admins can see this tab
+		$isOwn = (strcasecmp($handle, qa_get_logged_in_handle()) === 0);
+		if (!$isOwn && qa_get_logged_in_level() < QA_USER_LEVEL_ADMIN)
+			return;
+
+		if (isset($this->content['navigation']['sub']['flagged']))
+			return;
+
+		$this->content['navigation']['sub']['flagged'] = array(
+			'label' => 'Flagged',
+			'url' => qa_path_html('flagged/user/' . $handle),
+			'selected' => $selected,
+		);
+	}
 	function main_parts($content)
 	{
 		// Add filter toolbar on admin/flagged and flagged/user/* pages
 		$req = qa_request();
 		$isAdminFlagged = ($req === 'admin/flagged');
-		$isUserFlagged  = (strpos($req, 'flagged/user/') === 0);
+		$isUserFlagged  = ((strpos($req, 'flagged/user/') === 0) || (strpos($req, 'flagged/user') === 0));
 
 		if ($isAdminFlagged || $isUserFlagged) {
 			$currentPublic = qa_get('filter_public');
@@ -28,7 +71,8 @@ class qa_html_theme_layer extends qa_html_theme_base
 			// Base path differs per page
 			if ($isUserFlagged) {
 				$parts = explode('/', $req);
-				$basePath = 'flagged/user/' . (isset($parts[2]) ? $parts[2] : '');
+				$basePath = 'flagged/user/' . ((isset($parts[2]) && $parts[2] !== '') ? $parts[2] : qa_get_logged_in_handle());
+				//error_log("Base path: " . $basePath);
 			} else {
 				$basePath = 'admin/flagged';
 			}

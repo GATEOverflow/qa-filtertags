@@ -34,6 +34,7 @@ class qa_filtertags_flagged_page
 
 	public function process_request($request)
 	{
+		error_log('qa-filtertags-flagged-page: process_request called with request: ' . $request);
 		require_once QA_INCLUDE_DIR . 'db/selects.php';
 		require_once QA_INCLUDE_DIR . 'app/format.php';
 
@@ -54,10 +55,10 @@ class qa_filtertags_flagged_page
 		$viewUserId = null;
 		$viewUserHandle = null;
 
-		if (count($parts) >= 3 && $parts[1] === 'user') {
+		if (count($parts) >= 2 && $parts[1] === 'user') {
 			// flagged/user/handle
 			$mode = 'user';
-			$viewUserHandle = urldecode($parts[2]);
+			$viewUserHandle = isset($parts[2]) ? urldecode($parts[2]) : qa_get_logged_in_handle();
 			$result = qa_db_query_sub("SELECT userid, handle FROM ^users WHERE handle = $", $viewUserHandle);
 			$user = qa_db_read_one_assoc($result, true);
 			if (!$user) {
@@ -147,6 +148,13 @@ class qa_filtertags_flagged_page
 		// Build content
 		$qa_content = qa_content_prepare();
 		$qa_content['title'] = $title;
+		if ($mode === 'user' && function_exists('qa_user_sub_navigation')) {
+		$qa_content['navigation']['sub'] = qa_user_sub_navigation(
+			$viewUserHandle,
+			'flagged',
+			(int)$currentUserId === (int)$viewUserId
+		);
+	}
 
 		// Handle admin actions (clear flags / hide)
 		if (qa_is_http_post()) {
