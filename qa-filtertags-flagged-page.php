@@ -34,7 +34,6 @@ class qa_filtertags_flagged_page
 
 	public function process_request($request)
 	{
-		error_log('qa-filtertags-flagged-page: process_request called with request: ' . $request);
 		require_once QA_INCLUDE_DIR . 'db/selects.php';
 		require_once QA_INCLUDE_DIR . 'app/format.php';
 
