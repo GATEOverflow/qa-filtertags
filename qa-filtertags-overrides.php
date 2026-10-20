@@ -11,49 +11,19 @@
 	return $res;
 }
 
-function qa_db_flagged_post_qs_selectspec($voteuserid, $start, $fullflagged = false, $count = null)
+/**
+ * IMPORTANT: core's qa_db_flagged_post_qs_selectspec() (in qa-include/db/selects.php) does NOT call
+ * qa_to_override(__FUNCTION__), so it cannot be patched through Q2A's standard override mechanism -
+ * any attempt to override it here would silently never run. Instead, the admin/flagged listing is
+ * taken over entirely via the qa_page_routing() override below, which points that request at our own
+ * qa-filtertags-admin-flagged.php page. That page calls the real, unmodified
+ * qa_db_flagged_post_qs_selectspec() directly and then applies the filters below to its result.
+ */
+function qa_page_routing()
 {
-	$selectspec = qa_db_flagged_post_qs_selectspec_base($voteuserid, $start, $fullflagged, $count);
+	$routing = qa_page_routing_base();
+	$routing['admin/flagged'] = QA_FILTERTAGS_INCLUDE_RELATIVE . 'qa-filtertags-admin-flagged.php';
 
-	$filters = [];
-
-	// Filter: show only posts from public (non-filtertag) questions
-	if (qa_get('filter_public')) {
-		$globalTags = qa_opt('qa-filtertags-global');
-		if (!empty($globalTags)) {
-			$tags = array_map('trim', explode(',', $globalTags));
-			$escaped = implode("','", array_map('qa_db_escape_string', $tags));
-			// Exclude posts whose parent question has any global filter tag
-			$filters[] = "(CASE WHEN LEFT(^posts.type,1)='Q' THEN ^posts.postid ELSE ^posts.parentid END) NOT IN ("
-				. "SELECT pt.postid FROM ^posttags pt JOIN ^words wd ON pt.wordid=wd.wordid WHERE wd.word IN ('" . $escaped . "')"
-				. ")";
-		}
-	}
-
-	// Filter by post type (Q, A, C)
-	$postType = qa_get('filter_type');
-	if ($postType && in_array($postType, ['Q', 'A', 'C'])) {
-		$filters[] = "LEFT(^posts.type,1)='" . $postType . "'";
-	}
-
-	// Filter by flag reason
-	$reasonId = qa_get('filter_reason');
-	if ($reasonId === 'none') {
-		$filters[] = "^posts.postid NOT IN (SELECT postid FROM ^flagreasons)";
-	} elseif ($reasonId && is_numeric($reasonId) && (int)$reasonId >= 1 && (int)$reasonId <= 7) {
-		$filters[] = "^posts.postid IN (SELECT postid FROM ^flagreasons WHERE reasonid=" . (int)$reasonId . ")";
-	}
-
-	// Apply all filters to the inner subquery
-	if (!empty($filters)) {
-		$filterSql = ' AND ' . implode(' AND ', $filters);
-		$selectspec['source'] = str_replace(
-			"WHERE flagcount>0 AND type IN ('Q', 'A', 'C')",
-			"WHERE flagcount>0 AND type IN ('Q', 'A', 'C')" . $filterSql,
-			$selectspec['source']
-		);
-	}
-
-	return $selectspec;
+	return $routing;
 }
 ?>

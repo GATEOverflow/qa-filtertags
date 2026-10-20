@@ -50,6 +50,16 @@ class qa_html_theme_layer extends qa_html_theme_base
 			'selected' => $selected,
 		);
 	}
+
+	private function get_flagged_post_users()
+	{
+		$result = qa_db_query_sub(
+			"SELECT DISTINCT p.userid, u.handle FROM ^posts p JOIN ^users u ON p.userid = u.userid " .
+			"WHERE p.flagcount > 0 AND p.type IN ('Q', 'A', 'C') AND p.userid IS NOT NULL ORDER BY u.handle"
+		);
+		return qa_db_read_all_assoc($result);
+	}
+
 	function main_parts($content)
 	{
 		// Add filter toolbar on admin/flagged and flagged/user/* pages
@@ -61,12 +71,18 @@ class qa_html_theme_layer extends qa_html_theme_base
 			$currentPublic = qa_get('filter_public');
 			$currentType = qa_get('filter_type');
 			$currentReason = qa_get('filter_reason');
+			$currentExcludeUsers = qa_get('filter_exclude_users');
+			$excludeUserIds = array();
+			if ($currentExcludeUsers) {
+				$excludeUserIds = array_values(array_filter(array_map('intval', explode(',', $currentExcludeUsers))));
+			}
 
 			// Build current params to preserve across filter changes
 			$params = [];
 			if ($currentPublic) $params['filter_public'] = '1';
 			if ($currentType) $params['filter_type'] = $currentType;
 			if ($currentReason) $params['filter_reason'] = $currentReason;
+			if (!empty($excludeUserIds)) $params['filter_exclude_users'] = implode(',', $excludeUserIds);
 
 			// Base path differs per page
 			if ($isUserFlagged) {
@@ -116,7 +132,7 @@ class qa_html_theme_layer extends qa_html_theme_base
 				1 => 'Quality', 2 => 'Spam', 3 => 'Rude',
 				4 => 'Needs Edit', 5 => 'Duplicate', 6 => 'Copied', 7 => 'Prohibited'
 			];
-			$html .= '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">';
+			$html .= '<div style="margin-bottom:10px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;">';
 			$html .= '<span class="qffb-label" style="font-size:.82em;color:#666;font-weight:500;min-width:70px;">Reason:</span>';
 			$p = $params; unset($p['filter_reason']);
 			$html .= '<a href="' . qa_path_html($basePath, $p) . '" class="qffb-btn' . (!$currentReason ? ' qffb-active' : '') . '" style="' . $btnStyle . (!$currentReason ? $activeStyle : '') . '">All</a>';
@@ -128,12 +144,46 @@ class qa_html_theme_layer extends qa_html_theme_base
 			$html .= '<a href="' . qa_path_html($basePath, $p) . '" class="qffb-btn' . ($currentReason === 'none' ? ' qffb-active' : '') . '" style="' . $btnStyle . ($currentReason === 'none' ? $activeStyle : '') . '">No Reason</a>';
 			$html .= '</div>';
 
+			// Row 4: Exclude users (admin/flagged only) - selection persisted in the browser via localStorage
+			if ($isAdminFlagged) {
+				$flaggedUsers = $this->get_flagged_post_users();
+
+				if (!empty($flaggedUsers)) {
+					$html .= '<div>';
+					$html .= '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:8px;">';
+					$html .= '<span class="qffb-label" style="font-size:.82em;color:#666;font-weight:500;min-width:70px;">Exclude Users:</span>';
+					$html .= '<input type="text" id="qffb-user-search" placeholder="Search users..." style="padding:5px 10px;border:1px solid #ccc;border-radius:6px;font-size:.82em;width:180px;" oninput="qffbFilterUsers()">';
+					$html .= '<a href="javascript:void(0)" onclick="qffbResetExcluded()" class="qffb-btn" style="' . $btnStyle . '">Reset</a>';
+					$html .= '</div>';
+					$html .= '<div id="qffb-user-list" style="max-height:140px;overflow-y:auto;border:1px solid #e0e0e0;border-radius:6px;padding:8px 12px;background:#fff;display:flex;flex-wrap:wrap;gap:4px 16px;">';
+					foreach ($flaggedUsers as $flaggedUser) {
+						$uid = (int)$flaggedUser['userid'];
+						$handleHtml = qa_html($flaggedUser['handle']);
+						$checked = in_array($uid, $excludeUserIds) ? ' checked' : '';
+						$html .= '<label class="qffb-user-item" data-handle="' . strtolower($handleHtml) . '" style="font-size:.82em;display:flex;align-items:center;gap:4px;white-space:nowrap;">';
+						$html .= '<input type="checkbox" class="qffb-user-cb" value="' . $uid . '"' . $checked . ' onchange="qffbApplyExcluded()"> ' . $handleHtml;
+						$html .= '</label>';
+					}
+					$html .= '</div>';
+					$html .= '</div>';
+
+					$html .= '<script>';
+					$html .= 'function qffbGetParams(){return new URLSearchParams(window.location.search);}';
+					$html .= 'function qffbNavigate(p){p.delete("start");var qs=p.toString();window.location.href=window.location.pathname+(qs?("?"+qs):"");}';
+					$html .= 'function qffbFilterUsers(){var q=document.getElementById("qffb-user-search").value.toLowerCase();document.querySelectorAll(".qffb-user-item").forEach(function(item){item.style.display=item.getAttribute("data-handle").indexOf(q)>=0?"":"none";});}';
+					$html .= 'function qffbApplyExcluded(){var ids=[];document.querySelectorAll(".qffb-user-cb:checked").forEach(function(cb){ids.push(cb.value);});try{localStorage.setItem("qa_flagged_exclude_users",JSON.stringify(ids));}catch(e){}var p=qffbGetParams();if(ids.length)p.set("filter_exclude_users",ids.join(","));else p.delete("filter_exclude_users");qffbNavigate(p);}';
+					$html .= 'function qffbResetExcluded(){try{localStorage.removeItem("qa_flagged_exclude_users");}catch(e){}var p=qffbGetParams();p.delete("filter_exclude_users");qffbNavigate(p);}';
+					$html .= '(function(){try{var stored=localStorage.getItem("qa_flagged_exclude_users");var storedIds=stored?JSON.parse(stored):[];var p=qffbGetParams();var current=p.get("filter_exclude_users");var currentIds=current?current.split(","):[];var a=storedIds.slice().sort();var b=currentIds.slice().sort();if(JSON.stringify(a)!==JSON.stringify(b)){if(storedIds.length)p.set("filter_exclude_users",storedIds.join(","));else p.delete("filter_exclude_users");p.delete("start");window.location.replace(window.location.pathname+(p.toString()?("?"+p.toString()):""));}}catch(e){}})();';
+					$html .= '</script>';
+				}
+			}
+
 			$html .= '</div>';
 
 			$this->output($html);
 
 			// Fix pagination for admin/flagged only (uses cached count; user page computes its own)
-			if ($isAdminFlagged && ($currentPublic || $currentType || $currentReason)) {
+			if ($isAdminFlagged && ($currentPublic || $currentType || $currentReason || !empty($excludeUserIds))) {
 				$this->_flagged_filter_params = $params;
 			}
 		}
@@ -172,6 +222,13 @@ class qa_html_theme_layer extends qa_html_theme_base
 					if ($rid >= 1 && $rid <= 7) {
 						$where .= " AND postid IN (SELECT postid FROM ^flagreasons WHERE reasonid=" . $rid . ")";
 					}
+				}
+			}
+
+			if (!empty($filterParams['filter_exclude_users'])) {
+				$userIds = array_filter(array_map('intval', explode(',', $filterParams['filter_exclude_users'])));
+				if (!empty($userIds)) {
+					$where .= " AND userid NOT IN (" . implode(',', $userIds) . ")";
 				}
 			}
 

@@ -6,7 +6,14 @@
 			header('Location: ../../');
 			exit;
 	}
-	
+
+	// Relative path (from QA_INCLUDE_DIR) back to this plugin's own folder, used by the
+	// qa_page_routing() override in qa-filtertags-overrides.php to point 'admin/flagged'
+	// at our own copy of that page (needed because core's qa_db_flagged_post_qs_selectspec()
+	// does not support the standard qa_to_override() mechanism - see README.md for details).
+	if (!defined('QA_FILTERTAGS_INCLUDE_RELATIVE')) {
+		define('QA_FILTERTAGS_INCLUDE_RELATIVE', '../qa-plugin/' . basename(__DIR__) . '/');
+	}
 
 	qa_register_plugin_module('module', 'qa-filtertags-admin.php', 'qa_filtertags_admin', 'Filter Tags Admin');
 	
